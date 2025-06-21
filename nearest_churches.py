@@ -1,55 +1,95 @@
-# Install Pillow if not already installed: pip install Pillow
-from PIL import Image  # Correct import after installing Pillow
-from pygments import highlight
-from pygments.lexers import PythonLexer
-from pygments.formatters import ImageFormatter
-from io import BytesIO
+import time
+import requests
+from daytona_sdk import (
+    Daytona,
+    DaytonaConfig,
+    CreateSnapshotParams,
+    CreateSandboxFromSnapshotParams,
+    Resources,
+)
+from PIL import Image as PILImage
 
-# Python code to convert to image
-code = """
-import pandas as pd
-from geopy.geocoders import Nominatim
-from haversine import haversine, Unit
+def get_geocode(postcode):
+    """Geocode postcode to get latitude and longitude."""
+    url = f"https://api.postcodes.io/postcodes/{postcode}"
+    response = requests.get(url)
+    response.raise_for_status()
+    data = response.json()
+    if data["status"] == 200:
+        return data["result"]["latitude"], data["result"]["longitude"]
+    else:
+        raise ValueError(f"Invalid postcode: {postcode}")
 
-# Sample church location data
-data = {
-    'Postcode': ['EC1A 1BB', 'W1A 0AX'],
-    'Church_Lat': [51.5155, 51.5078],
-    'Church_Long': [-0.1105, -0.1282],
-}
+def find_nearest_churches(lat, lon, radius_km=5):
+    """Find nearest churches within radius using Overpass API."""
+    radius_m = radius_km * 1000
+    query = f"""
+    [out:json][timeout:25];
+    (
+      node["amenity"="place_of_worship"]["religion"="christian"](around:{radius_m},{lat},{lon});
+      way["amenity"="place_of_worship"]["religion"="christian"](around:{radius_m},{lat},{lon});
+      relation["amenity"="place_of_worship"]["religion"="christian"](around:{radius_m},{lat},{lon});
+    );
+    out center;
+    """
+    url = "http://overpass-api.de/api/interpreter"
+    response = requests.post(url, data={"data": query})
+    response.raise_for_status()
+    data = response.json()
+    churches = []
+    for element in data.get("elements", []):
+        name = element.get("tags", {}).get("name", "Unnamed Church")
+        lat_ = element.get("lat") or element.get("center", {}).get("lat")
+        lon_ = element.get("lon") or element.get("center", {}).get("lon")
+        churches.append({"name": name, "latitude": lat_, "longitude": lon_})
+    return churches
 
-df = pd.DataFrame(data)
+def main():
+    postcode = input("Enter postcode: ").strip()
 
-def geocode_postcode(postcode):
-    geolocator = Nominatim(user_agent="nearest_churches")
-    location = geolocator.geocode(postcode)
-    return location.latitude, location.longitude if location else None
-
-def find_nearest_churches(user_postcode):
-    user_lat, user_long = geocode_postcode(user_postcode)
-    if not user_lat:
-        print("Postcode not found!")
+    try:
+        lat, lon = get_geocode(postcode)
+        print(f"Coordinates for {postcode}: {lat}, {lon}")
+    except Exception as e:
+        print(f"Error geocoding postcode: {e}")
         return
-    df['Distance'] = df.apply(lambda row: haversine((user_lat, user_long), (row['Church_Lat'], row['Church_Long']), unit=Unit.KILOMETERS), axis=1)
-    nearest = df.nsmallest(3, 'Distance')
-    print(f"Nearest churches to {user_postcode}:\\n{nearest}")
 
-find_nearest_churches('EC1A 1BB')
-"""
+    churches = find_nearest_churches(lat, lon)
+    if not churches:
+        print("No churches found nearby.")
+    else:
+        print(f"Found {len(churches)} churches nearby:")
+        for church in churches:
+            print(f"- {church['name']} at ({church['latitude']}, {church['longitude']})")
 
-# Create an ImageFormatter without specifying font_name to avoid fc-list dependency
-formatter = ImageFormatter(font_size=14, line_numbers=True)
-lexer = PythonLexer()
+    # Initialize Daytona client with string target region (no enum)
+    config = DaytonaConfig(target="eu")
+    daytona = Daytona(config)
 
-# Get highlighted code as binary image data
-image_bytes = highlight(code, lexer, formatter)
+    # Prepare example image for snapshot creation (blank white)
+    image = PILImage.new("RGB", (200, 200), color="white")
 
-# Load image from bytes
-image = Image.open(BytesIO(image_bytes))
+    # Create snapshot
+    snapshot_name = f"python-example:{int(time.time())}"
+    snapshot_params = CreateSnapshotParams(
+        name=snapshot_name,
+        image=image,
+        resources=Resources(cpu=1, memory=1, disk=3),
+    )
+    daytona.snapshot.create(snapshot_params, on_logs=print)
 
-# Resize as needed
-image = image.resize((780, 580))
+    # Create sandbox from snapshot
+    sandbox_params = CreateSandboxFromSnapshotParams(snapshot=snapshot_name, language="python")
+    sandbox = daytona.create(sandbox_params)
+    print(f"Sandbox created with ID: {sandbox.id}")
 
-# Save the final image
-image.save("python_code_image.png")
-print("Code image saved as 'python_code_image.png'")
+    # Refresh sandbox to update properties directly
+    sandbox.refresh_data()
+
+    # Access updated sandbox info via flattened properties
+    print(f"Refreshed Sandbox state: {sandbox.state}")
+    print(f"Refreshed Sandbox auto stop interval: {sandbox.auto_stop_interval}")
+    print(f"Refreshed Sandbox runner domain: {sandbox.runner_domain}")
+
+if __name__ == "__main__":
+    main()

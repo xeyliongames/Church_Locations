@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Find Nearest Churches</title>
+    <link rel="stylesheet" href="churches.css">
+</head>
+<body>
+    <audio src="music.mp3" autoplay loop hidden></audio>
+    <h1>Find Nearest Churches</h1>
+    <form id="postcodeForm">
+        <label for="postcode">Enter your postcode:</label>
+        <input type="text" id="postcode" name="postcode" required>
+        <button type="submit">Search</button>
+    </form>
+    <div id="results"></div>
+    <script>
+        document.getElementById('postcodeForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const postcode = document.getElementById('postcode').value;
+            document.getElementById('results').innerText = 'Searching...';
+            // POST to the backend API (handled by upload_movies.py and related logic)
+            const response = await fetch('/api/search_churches', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ postcode })
+            });
+            const data = await response.json();
+            if (data && data.churches && data.churches.length > 0) {
+                let table = '<table border="1"><thead><tr>';
+                const columns = Object.keys(data.churches[0]);
+                columns.forEach(col => {
+                    table += `<th>${col}</th>`;
+                });
+                table += '<th>Image</th></tr></thead><tbody>';
+                data.churches.forEach(church => {
+                    table += '<tr>';
+                    columns.forEach(col => {
+                        table += `<td>${church[col]}</td>`;
+                    });
+                    table += `<td>`;
+                    if (church.image_url) {
+                        table += `<img src="${church.image_url}" width="256" height="256" alt="Church Image">`;
+                    } else {
+                        table += 'No image';
+                    }
+                    table += `</td>`;
+                    table += '</tr>';
+                });
+                table += '</tbody></table>';
+                document.getElementById('results').innerHTML = table;
+            } else {
+                document.getElementById('results').innerText = 'No churches found.';
+            }
+        });
+    </script>
+</body>
+</html>

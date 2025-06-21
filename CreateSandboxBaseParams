@@ -1,0 +1,4 @@
+sandbox = daytona.create(
+    CreateSandboxBaseParams(image=image_name),
+    on_logs=print,
+)
